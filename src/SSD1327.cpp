@@ -1,338 +1,210 @@
-#ifndef SSD1327_CPP
-#define SSD1327_CPP
+#!/bin/bash
 
-#include "Arduino.h"
-#include "stdint.h"
-#include "SPI.h"
-#include "font8x8_basic.h"
-#include "font16x16.h"
-#include "font16x32.h"
+# code written by Ahmad Byagowi for demonstration purposes of the SSD1327 OLED module over the i2c bus
 
-#ifndef SSD1327_H
-#include "SSD1327.h"
-#endif
+I2CBUS=2
+DEVADDR=0x3D
 
+declare -A frameBuffer
 
-SSD1327::SSD1327(int cs, int dc, int rst){
-	_cs = cs;
-	_dc = dc;
-	_rst = rst;
+declare -A tempBuff
+
+function display_off() {
+i2cset -y $I2CBUS $DEVADDR 0x00 0xAB # Set Display offset
+i2cset -y $I2CBUS $DEVADDR 0x00 0x00 # Set Display offset
+i2cset -y $I2CBUS $DEVADDR 0x00 0xAE # Display OFF (sleep mode)
+sleep 0.1
 }
 
-//TODO: Find a way to handle the write commands without toggling CS and DC every time
-void SSD1327::writeCmd(uint8_t reg){//Writes a command byte to the driver
-	digitalWrite(_dc, LOW);
-	digitalWrite(_cs, LOW);
-	SPI.transfer(reg);
-	digitalWrite(_cs, HIGH);
+function init_display() {
+i2cset -y $I2CBUS $DEVADDR 0x00 0xFD 0x01 0x12 i # Unlock
+i2cset -y $I2CBUS $DEVADDR 0x00 0xAE 0x00 i  # Display off
+i2cset -y $I2CBUS $DEVADDR 0x00 0x15 0x00 0x3F i  # Set Column address
+i2cset -y $I2CBUS $DEVADDR 0x00 0x75 0x00 0x7F i  # Set Row address
+i2cset -y $I2CBUS $DEVADDR 0x00 0xA1 0x00  i  # Set Start line
+i2cset -y $I2CBUS $DEVADDR 0x00 0xA2 0x00 i  # Set Display offset
+i2cset -y $I2CBUS $DEVADDR 0x00 0xA0 0x14 0x11 i  # Set Display offset
+i2cset -y $I2CBUS $DEVADDR 0x00 0xA8 0x7F i  # 
+i2cset -y $I2CBUS $DEVADDR 0x00 0xAB 0x01 i  # 
+i2cset -y $I2CBUS $DEVADDR 0x00 0xB1 0xE2 i  # 
+i2cset -y $I2CBUS $DEVADDR 0x00 0xB3 0x91 i  # 
+i2cset -y $I2CBUS $DEVADDR 0x00 0xBC 0x08 i  # 
+i2cset -y $I2CBUS $DEVADDR 0x00 0xBE 0x07 i  # 
+i2cset -y $I2CBUS $DEVADDR 0x00 0xB6 0x01 i  # 
+i2cset -y $I2CBUS $DEVADDR 0x00 0xD5 0x62 i  # 
+i2cset -y $I2CBUS $DEVADDR 0x00 0xb8 0x0f 0x00 0x01 0x02 0x03 0x04 0x05 0x06 0x07 0x08 0x10 0x18 0x20 0x2f 0x38 0x3f i  
+i2cset -y $I2CBUS $DEVADDR 0x00 0xB9  # 
+i2cset -y $I2CBUS $DEVADDR 0x00 0x81 0x7F i  # 
+i2cset -y $I2CBUS $DEVADDR 0x00 0xA4 # 
+i2cset -y $I2CBUS $DEVADDR 0x00 0x2E  # 
+i2cset -y $I2CBUS $DEVADDR 0x00 0xAF  # 
+i2cset -y $I2CBUS $DEVADDR 0x00 0xCA 0x3F i  # S
+i2cset -y $I2CBUS $DEVADDR 0x00 0xA0 0x51 0x42 i  # 
+
 }
 
-void SSD1327::writeData(uint8_t data){//Writes 1 byte to the display's memory
-	digitalWrite(_dc, HIGH);
-	digitalWrite(_cs, LOW);
-	SPI.transfer(data);
-	digitalWrite(_cs, HIGH);
+function display_on() {
+i2cset -y $I2CBUS $DEVADDR 0x00 0xAB  # Display ON (normal mode)
+i2cset -y $I2CBUS $DEVADDR 0x00 0x01  # Set Display offset
+i2cset -y $I2CBUS $DEVADDR 0x00 0xAF  # Set Display offset
+
+sleep 0.001
 }
 
-void SSD1327::setWriteZone(uint8_t x1, uint8_t y1, uint8_t x2, uint8_t y2) { //defines a rectangular area of memory which the driver will itterate through. This function takes memory locations, meaning a 64x128 space
-	writeCmd(0x15); //Set Column Address
-	writeCmd(x1); //Beginning. Note that you must divide the column by 2, since 1 byte in memory is 2 pixels
-	writeCmd(x2); //End
-	
-	writeCmd(0x75); //Set Row Address
-	writeCmd(y1); //Beginning
-	writeCmd(y2); //End
+function reset_cursor() {
+   i2cset -y $I2CBUS $DEVADDR 0x00 0x15 0x00 0x3F 0x75 0x00 0x7F i 
 }
 
-uint16_t SSD1327::coordsToAddress(uint8_t x, uint8_t y){ //Converts a pixel location to a linear memory address
-	return (x/2)+(y*64);
+function set_cursor() {
+	i2cset -y $I2CBUS $DEVADDR 0x00 0x15 $(( ${1} >> 1 ))  0x3F 0x75 ${2} 0x7F i 
 }
 
-void SSD1327::setPixelChanged(uint8_t x, uint8_t y, bool changed){
-	uint16_t targetByte = coordsToAddress(x, y)/8;
-	bitWrite(changedPixels[targetByte], coordsToAddress(x, y) % 8, changed);
+function set_WriteZone() {
+	i2cset -y $I2CBUS $DEVADDR 0x00 0x15 ${1} ${2} 0x75 ${3} ${4} i 
 }
 
-void SSD1327::drawPixel(uint8_t x, uint8_t y, uint8_t color, bool display){//pixel xy coordinates 0-127, color 0-15, and whether to immediately output it to the display or buffer it 
-	int address = coordsToAddress(x,y);
-	if((x%2) == 0){//If this is an even pixel, and therefore needs shifting to the more significant nibble
-		frameBuffer[address] = (frameBuffer[address] & 0x0f) | (color<<4);
-	} else {
-		frameBuffer[address] = (frameBuffer[address] & 0xf0) | (color);
-	}
-	
-	if(display){
-		setWriteZone(x/2,y,x/2,y);
-		writeData(frameBuffer[address]);
-		setPixelChanged(x, y, false); // We've now synced the display with this byte of the buffer, no need to write it again
-	} else {
-		setPixelChanged(x, y, true); // This pixel is due for an update next refresh
-	}
+function frameToOLED(){
+	echo $(( $(( {$1}/2 )) + $(( {$2}*64 )) ))
 }
 
-void SSD1327::drawRect(uint8_t x1, uint8_t y1, uint8_t x2, uint8_t y2, uint8_t color, bool display){//Draws a rectangle from x1,y1 to x2,y2. 
-	uint8_t xMin = _min(x1, x2); // TODO: double performance by writing whole bytes at a time
-	uint8_t xMax = _max(x1, x2);
-	uint8_t yMin = _min(y1, y2);
-	uint8_t yMax = _max(y1, y2);
-	for (uint8_t x = xMin; x <= xMax; x++) {
-		for (uint8_t y = yMin; y <= yMax; y++) {
-			drawPixel(x, y, color, display);
-		}
-	}
+
+function ord() {
+  # Get ASCII Value from Character
+  local chardec=$(LC_CTYPE=C printf '%d' "'$1")
+  [ "${chardec}" -eq 0 ] && chardec=32             # Manual Mod for " " (Space)
+  echo ${chardec}
+  #printf '%d' "'$1"
+  #LC_CTYPE=C printf '%d' "'$1"
 }
 
-void SSD1327::drawHLine(int x, int y, int length, uint8_t color, bool display){
-	for (uint8_t i = x; i < x+length; i++) {
-		drawPixel(i, y, color, display);
-	}
+function showtext() {
+  local a=0; local b=0; local achar=0; local charp=0; local charout="";
+  local text=${1}
+  local textlen=${#text}
+  #echo "Textlen: ${textlen}"
+  for (( a=0; a<${textlen}; a++ )); do
+    achar="`ord ${text:${a}:1}`"               # get the ASCII Code
+    let charp=(achar-32)*${font_width}         # calculate first byte in font array
+    charout=""
+    for (( b=0; b<${font_width}; b++ )); do    # character loop
+      charout="${charout} ${font[charp+b]}"    # build character out of single values
+    done
+    # echo "${a}: ${text:${a}:1} -> ${achar} -> ${charp} -> ${charout}"
+  i2cset -y $I2CBUS $DEVADDR 0x40 ${charout} i                      # send character bytes to display
+  done
 }
 
-void SSD1327::drawVLine(int x, int y, int length, uint8_t color, bool display){
-	for (uint8_t i = y; i < y+length; i++) {
-		drawPixel(x, i, color, display);
-	}
+function loadBuffer(){
+i2cset -y $I2CBUS $DEVADDR 0x00 0x15 0x00 0x3F 0x75 0x00 0x7F i 
+for ((i=0;i<256;i++)) do
+	for ((j=0;j<32;j++)) do
+		local pointer=$(( $j+(($i<<5)) ))
+		tempBuff[$j]=${frameBuffer[$pointer]}
+	done
+   i2cset -y $I2CBUS $DEVADDR 0x40 ${tempBuff[0]} ${tempBuff[1]} ${tempBuff[2]} ${tempBuff[3]} ${tempBuff[4]} ${tempBuff[5]} ${tempBuff[6]} ${tempBuff[7]} ${tempBuff[8]} ${tempBuff[9]} ${tempBuff[10]} ${tempBuff[11]} ${tempBuff[12]} ${tempBuff[13]} ${tempBuff[14]} ${tempBuff[15]} ${tempBuff[16]} ${tempBuff[17]} ${tempBuff[18]} ${tempBuff[19]} ${tempBuff[20]} ${tempBuff[21]} ${tempBuff[22]} ${tempBuff[23]} ${tempBuff[24]} ${tempBuff[25]} ${tempBuff[26]} ${tempBuff[27]} ${tempBuff[28]} ${tempBuff[29]} ${tempBuff[30]} ${tempBuff[31]} i
+
+done
 }
 
-void SSD1327::drawLine(int x0, int y0, int x1, int y1, uint8_t color, bool display){ //Bresenham's line algorithm
-	int deltaX = abs(x1-x0);
-	int deltaY = abs(y1-y0);
-	int signX = x0<x1 ? 1 : -1;
-	int signY = y0<y1 ? 1 : -1; 
-	int error = (deltaX>deltaY ? deltaX : -deltaY)/2, error2;
-	
-	while (true) {
-		drawPixel(x0, y0, color, display);
-		if (x0==x1 && y0==y1) break;
-		error2 = error;
-		if (error2 >-deltaX) { error -= deltaY; x0 += signX; }
-		if (error2 < deltaY) { error += deltaX; y0 += signY; }
-	}
+function blankBuffer(){
+for ((i=0;i<64;i++)) do
+    for ((j=0;j<128;j++)) do
+	local pointer=$(( $i+(($j<<6)) ))
+        frameBuffer[$pointer]=0x00
+    done
+done
 }
 
-void SSD1327::drawByteAsRow(uint8_t x, uint8_t y, uint8_t byte, uint8_t color){//Draws a byte as an 8 pixel row
-	for (int i = 0; i < 8; i++) {
-		if(bitRead(byte, i)){
-			drawPixel(x+i, y, color, false);
-		}
-	}
+
+function fillBuffer(){
+for ((i=0;i<64;i++)) do
+    for ((j=0;j<128;j++)) do
+	local pointer=$(( $i+(($j<<6)) ))
+        frameBuffer[$pointer]=0xFF
+    done
+done
 }
 
-void SSD1327::drawChar(uint8_t x, uint8_t y, char thisChar, uint8_t color){
-	for (size_t i = 0; i < 8; i++) {
-		drawByteAsRow(x, y+i, font8x8_basic[(unsigned char)thisChar][i], color);
-	}
+function drawPixel(){
+local pix_addr=$(( $(( $2 >> 1 )) + $(( $1 << 6 )) ))
+local pix_val=0
+local input=$(($3 & 0xFF))
+if [ $(( $2 % 2 )) -eq 0 ]; then
+  pix_val=$(( $(( ${frameBuffer[$pix_addr]} & 0x0F )) | $(( $input << 4 )) ))
+frameBuffer[$pix_addr]=$pix_val
+else
+  pix_val=$(( $(( ${frameBuffer[$pix_addr]} & 0xF0 )) | $input ))
+frameBuffer[$pix_addr]=$pix_val
+fi
+if [ $4 -eq 1 ]; then
+set_cursor $2 $1
+i2cset -y $I2CBUS $DEVADDR 0x40 $pix_val i
+fi
 }
 
-void SSD1327::drawCharArray(uint8_t x, uint8_t y, char text[], uint8_t color, int size){
-	const char* thisChar;
-	uint8_t xOffset = 0;
-	if(size==16){
-		for (thisChar = text; *thisChar != '\0'; thisChar++) {
-			drawChar16(x+xOffset, y, *thisChar, color);
-			xOffset += 8;
-		}
-	} else if(size==32){
-		for (thisChar = text; *thisChar != '\0'; thisChar++) {
-			drawChar32(x+xOffset, y, *thisChar, color);
-			xOffset += 16;
-		}
-	}
-	 else {
-		for (thisChar = text; *thisChar != '\0'; thisChar++) {
-			drawChar(x+xOffset, y, *thisChar, color);
-			xOffset += 8;
-		}
-	}
+function drawRect(){
+
+local xMax=$(( $1 > $3 ? $1 : $3 ))
+local xMin=$(( $1 > $3 ? $3 : $1 ))
+local yMax=$(( $2 > $4 ? $2 : $4 ))
+local yMin=$(( $2 > $4 ? $4 : $2 ))
+
+for ((j=yMin;j<yMax;j++)) do
+    for ((i=xMin;i<xMax;i++)) do
+	     drawPixel $i $j $5 $6
+    done
+done
 }
 
-void SSD1327::drawString(uint8_t x, uint8_t y, String textString, uint8_t color, int size){
-	char text[64];
-	textString.toCharArray(text, 64);
-	drawCharArray(x,y, text, color, size);
+function drawLine(){
+
+local xMax=$(( $1 > $3 ? $1 : $3 ))
+local xMin=$(( $1 > $3 ? $3 : $1 ))
+local yMax=$(( $2 > $4 ? $2 : $4 ))
+local yMin=$(( $2 > $4 ? $4 : $2 ))
+
+local xDelta=$(( $xMax - $xMin ))
+local yDelta=$(( $yMax - $yMin ))
+
+local xSign=$(( $1 > $3 ? -1 : 1 ))
+local ySign=$(( $2 > $4 ? -1 : 1 ))
+
+if [ $xDelta -gt $yDelta ];then
+  for ((t=0;t<xDelta;t++)) do
+     if [ $xDelta -ne 0 ]; then 
+        drawPixel $(( $1 + $(( $t * $xSign )) )) $(( $2 + $(( $(( $(( $(( $t * $ySign )) *  $yDelta )) / $xDelta  )) )) )) $5 $6
+     else
+        drawPixel $(( $1 + $(( $t * $xSign )) )) $2 $5 $6
+     fi   
+  done
+else
+  for ((t=0;t<yDelta;t++)) do
+     if [ $yDelta -ne 0 ]; then 
+        drawPixel $(( $1 + $(( $(( $(( $(( $t * $xSign )) *  $xDelta )) / $yDelta  )) )) )) $(( $2 + $(( $t * $ySign )) )) $5 $6
+     else
+        drawPixel $1 $(( $2 + $(( $t * $ySign )) )) $5 $6
+     fi
+  done
+fi
 }
 
-void SSD1327::drawChar16(uint8_t x, uint8_t y, char thisChar, uint8_t color){
-	for (size_t row = 0; row < 16; row++) {
-		drawByteAsRow(x, y+row, font16x16[(unsigned char)thisChar][row*2], color);
-		drawByteAsRow(x+8, y+row, font16x16[(unsigned char)thisChar][(row*2)+1], color);
-	}
-}
 
-void SSD1327::drawChar32(uint8_t x, uint8_t y, char thisChar, uint8_t color){
-	for (size_t row = 0; row < 32; row++) {
-		drawByteAsRow(x, y+row, font16x32[(unsigned char)thisChar][row*2], color);
-		drawByteAsRow(x+8, y+row, font16x32[(unsigned char)thisChar][(row*2)+1], color);
-	}
-}
+display_off
+init_display
+display_on
 
-void SSD1327::fillStripes(uint8_t offset){ //gradient test pattern
-	for(int i = 0; i < 8192; i++){
-		uint8_t color = ((i+offset) & 0xF) | (((i+offset) & 0xF)<<4);
-		frameBuffer[i] = color;
-	}
-	for (uint16_t i = 0; i < 1024; i++) {
-		changedPixels[i] = 0xFF; // Set all pixels to be updated next frame. fillStripes should not be used without a full write anyways, but just in case
-	}
-}
+blankBuffer
+loadBuffer
 
-void SSD1327::setupScrolling(uint8_t startRow, uint8_t endRow, uint8_t startCol, uint8_t endCol, uint8_t scrollSpeed, bool right){
-	uint8_t swap;
-	if (startRow > endRow) { // Ensure start row is before end
-		swap = startRow;
-		startRow = endRow;
-		endRow = swap;
-	}
-	if (startCol > endCol) { // Ditto for columns
-		swap = startCol;
-		startCol = endCol;
-		endCol = swap;
-	}
-	writeCmd(0x2E);   // Deactivate scrolling before changing anything
-	if (right) {
-		writeCmd(0x26); // Scroll right
-	} else {
-		writeCmd(0x27); // Scroll left
-	}
-	writeCmd(0); // Dummy byte
-	writeCmd(startRow);
-	writeCmd(scrollSpeed);
-	writeCmd(endRow);
-	writeCmd(startCol);
-	writeCmd(endCol);
-	writeCmd(0); // Dummy byte
-};
+#drawRect 10 10 20 100 10 1
 
-void SSD1327::startScrolling(){
-	writeCmd(0x2F);
-}
+drawLine 10 10 100 100 10 1
+drawLine 10 10 100 95 10 1
+drawLine 10 10 100 90 10 1
+drawLine 10 10 100 10 10 1
+drawLine 10 10 10 100 10 1
+drawLine 100 10 10 100 10 1
+drawLine 10 10 95 100 10 1
+drawLine 10 10 90 100 10 1
 
-void SSD1327::stopScrolling(){
-	writeCmd(0x2E);
-}
 
-void SSD1327::scrollStep(uint8_t startRow, uint8_t endRow, uint8_t startCol, uint8_t endCol, bool right){
-	setupScrolling(startRow, endRow, startCol, endCol, SSD1327_SCROLL_2, right);
-	startScrolling();
-	delay(15);
-	stopScrolling();
-}
-
-void SSD1327::clearBuffer(){//
-	for(int i = 0; i < 8192; i++){
-		if (frameBuffer[i]) { // If there is a non-zero (non-black) byte here, make sure it gets updated
-			frameBuffer[i] = 0;
-			bitWrite(changedPixels[i/8], i%8, 1); // Mark this pixel as needing an update
-		}
-	}
-}
-
-void SSD1327::writeFullBuffer(){ //Outputs the full framebuffer to the display
-	setWriteZone(0,0,63,127); //Full display
-	for(int i = 0; i < 8192; i++){
-		writeData(frameBuffer[i]);
-	}
-	for (uint16_t i = 0; i < 1024; i++) {
-		changedPixels[i] = 0; // Set all pixels as up to date.
-	}
-}
-
-void SSD1327::writeUpdates(){ // Writes only the pixels that have changed to the display
-	for (size_t y = 0; y < 128; y++) {
-		bool continued = false; // If we can continue with the write zone we're using
-		for (size_t x = 0; x < 128; x++) {
-			uint16_t address = coordsToAddress(x, y);
-			if ( bitRead(changedPixels[address/8], address % 8) ) { // If we need an update here
-				if (!continued) { // Just write the byte, no new write zone needed
-					continued = true;
-					setWriteZone(x/2, y, 63, 127); // Set the write zone for this new byte and any subsequent ones
-				}
-				writeData(frameBuffer[address]);
-				bitWrite(changedPixels[address/8], address % 8, 0);
-			} else {
-				continued = false; // The chain of pixels is broken
-			}
-		}
-	}
-}
-
-void SSD1327::setContrast(uint8_t contrast){
-	writeCmd(0x81);  //set contrast control
-	writeCmd(contrast);  //Contrast byte
-}
-
-void SSD1327::initRegs(){ //Sends all the boilerplate startup and config commands to the driver
-	writeCmd(0xae);//--turn off oled panel
-
-	writeCmd(0x15);  //set column addresses
-	writeCmd(0x00);  //start column  0
-	writeCmd(0x7f);  //end column  127
-
-	writeCmd(0x75);  //set row addresses
-	writeCmd(0x00);  //start row  0
-	writeCmd(0x7f);  //end row  127
-
-	writeCmd(0x81);  //set contrast control
-	writeCmd(0x80);  //50% (128/255)
-
-	writeCmd(0xa0);   //gment remap
-	writeCmd(0x51);  //51 (To my understanding, this is orientation
-
-	writeCmd(0xa1);  //start line
-	writeCmd(0x00);
-
-	writeCmd(0xa2);  //display offset
-	writeCmd(0x00);
-
-	writeCmd(0xa4);  //rmal display
-	writeCmd(0xa8);  //set multiplex ratio
-	writeCmd(0x7f);
-
-	writeCmd(0xb1);  //set phase leghth
-	writeCmd(0xf1);
-
-	writeCmd(0xb3);  //set dclk
-	writeCmd(0x00);  //80Hz:0xc1 90Hz:0xe1  100Hz:0x00  110Hz:0x30 120Hz:0x50  130Hz:0x70   01
-
-	writeCmd(0xab);  //Enable vReg
-	writeCmd(0x01);  
-
-	writeCmd(0xb6);  //set phase leghth
-	writeCmd(0x0f);
-
-	writeCmd(0xbe); //Set vcomh voltage
-	writeCmd(0x0f);
-
-	writeCmd(0xbc); //set pre-charge voltage
-	writeCmd(0x08);
-
-	writeCmd(0xd5); //second precharge period
-	writeCmd(0x62);
-
-	writeCmd(0xfd); //Unlock commands
-	writeCmd(0x12);
-
-	writeCmd(0xAF);
-	delay(300);
-}
-
-void SSD1327::init(){
-	pinMode(_cs, OUTPUT);
-	pinMode(_dc, OUTPUT);
-	pinMode(_rst, OUTPUT);
-	
-	SPI.setDataMode(SPI_MODE0);
-	SPI.setBitOrder(MSBFIRST);
-	SPI.setClockDivider(SPI_CLOCK_DIV2);
-	SPI.begin();
-	
-	digitalWrite(_rst, HIGH); //Reset display
-	delay(100);
-	digitalWrite(_rst, LOW);
-	delay(100);
-	digitalWrite(_rst, HIGH);
-	delay(100);
-
-	initRegs();
-}
-#endif
